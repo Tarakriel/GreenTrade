@@ -6,26 +6,26 @@ session_start();
 require_once __DIR__ . "/../includes/db.php";
 $message = "";
 
-/* Update order status */
+/* Update dispute status */
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['update_status'])) {
-    $order_id = (int)$_POST['order_id'];
-    $order_status = $_POST['order_status'];
+    $dispute_id = (int)$_POST['dispute_id'];
+    $status = $_POST['status'];
 
-    $allowed_statuses = ['pending', 'paid', 'delivered', 'completed', 'cancelled', 'disputed'];
+    $allowed_statuses = ['open', 'under_review', 'resolved', 'closed'];
 
-    if (!in_array($order_status, $allowed_statuses)) {
-        $message = "<div class='alert error'>Invalid order status selected.</div>";
+    if (!in_array($status, $allowed_statuses)) {
+        $message = "<div class='alert error'>Invalid status selected.</div>";
     } else {
-        $stmt = $conn->prepare("UPDATE orders SET order_status = ? WHERE order_id = ?");
+        $stmt = $conn->prepare("UPDATE disputes SET status = ? WHERE dispute_id = ?");
 
         if (!$stmt) {
             die("Update prepare failed: " . $conn->error);
         }
 
-        $stmt->bind_param("si", $order_status, $order_id);
+        $stmt->bind_param("si", $status, $dispute_id);
 
         if ($stmt->execute()) {
-            $message = "<div class='alert success'>Order status updated successfully.</div>";
+            $message = "<div class='alert success'>Dispute status updated successfully.</div>";
         } else {
             $message = "<div class='alert error'>Update failed: " . $stmt->error . "</div>";
         }
@@ -34,20 +34,20 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['update_status'])) {
     }
 }
 
-/* Delete order */
+/* Delete dispute */
 if (isset($_GET['delete'])) {
-    $order_id = (int)$_GET['delete'];
+    $dispute_id = (int)$_GET['delete'];
 
-    $stmt = $conn->prepare("DELETE FROM orders WHERE order_id = ?");
+    $stmt = $conn->prepare("DELETE FROM disputes WHERE dispute_id = ?");
 
     if (!$stmt) {
         die("Delete prepare failed: " . $conn->error);
     }
 
-    $stmt->bind_param("i", $order_id);
+    $stmt->bind_param("i", $dispute_id);
 
     if ($stmt->execute()) {
-        $message = "<div class='alert success'>Order deleted successfully.</div>";
+        $message = "<div class='alert success'>Dispute deleted successfully.</div>";
     } else {
         $message = "<div class='alert error'>Delete failed: " . $stmt->error . "</div>";
     }
@@ -55,28 +55,22 @@ if (isset($_GET['delete'])) {
     $stmt->close();
 }
 
-/* Get orders */
-$sql = "SELECT orders.*, 
-               buyer.full_name AS buyer_name,
-               buyer.email AS buyer_email,
-               seller.full_name AS seller_name,
-               seller.email AS seller_email,
-               listings.title AS listing_title,
-               listings.price,
-               payments.payment_method,
-               payments.escrow_status,
-               payments.paid_at
-        FROM orders
-        LEFT JOIN users AS buyer ON orders.buyer_id = buyer.user_id
-        LEFT JOIN users AS seller ON orders.seller_id = seller.user_id
+/* Get disputes */
+$sql = "SELECT disputes.*, 
+               users.full_name AS reported_by,
+               users.email AS reporter_email,
+               orders.order_status,
+               listings.title AS listing_title
+        FROM disputes
+        LEFT JOIN users ON disputes.user_id = users.user_id
+        LEFT JOIN orders ON disputes.order_id = orders.order_id
         LEFT JOIN listings ON orders.listing_id = listings.listing_id
-        LEFT JOIN payments ON orders.order_id = payments.order_id
-        ORDER BY orders.created_at DESC";
+        ORDER BY disputes.created_at DESC";
 
-$orders = $conn->query($sql);
+$disputes = $conn->query($sql);
 
-if (!$orders) {
-    die("Orders query failed: " . $conn->error);
+if (!$disputes) {
+    die("Disputes query failed: " . $conn->error);
 }
 ?>
 
@@ -84,7 +78,7 @@ if (!$orders) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Order Management - GreenTrade Admin</title>
+    <title>Dispute Management - GreenTrade Admin</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <style>
@@ -139,7 +133,7 @@ if (!$orders) {
         table {
             width: 100%;
             border-collapse: collapse;
-            min-width: 1200px;
+            min-width: 1100px;
         }
 
         th, td {
@@ -189,41 +183,32 @@ if (!$orders) {
         }
 
         .badge {
+            background: #d1e7dd;
+            color: #0f5132;
             padding: 6px 11px;
             border-radius: 20px;
             font-size: 13px;
             display: inline-block;
-            font-weight: bold;
         }
 
-        .pending {
+        .badge.open {
+            background: #f8d7da;
+            color: #842029;
+        }
+
+        .badge.under_review {
             background: #fff3cd;
             color: #664d03;
         }
 
-        .paid {
-            background: #cff4fc;
-            color: #055160;
-        }
-
-        .delivered {
+        .badge.resolved {
             background: #d1e7dd;
             color: #0f5132;
         }
 
-        .completed {
-            background: #198754;
-            color: white;
-        }
-
-        .cancelled {
+        .badge.closed {
             background: #e2e3e5;
             color: #41464b;
-        }
-
-        .disputed {
-            background: #f8d7da;
-            color: #842029;
         }
 
         .alert {
@@ -274,67 +259,54 @@ if (!$orders) {
         <a href="users.php">Users</a>
         <a href="roles.php">Roles</a>
         <a href="listing.php">Listings</a>
-        <a href="disputes.php">Disputes</a>
         <a href="../listing.php">Main Site</a>
     </div>
 </div>
 
 <div class="container">
-    <h1>Order Management</h1>
+    <h1>Dispute Management</h1>
 
     <?php echo $message; ?>
 
     <div class="table-wrap">
         <table>
             <tr>
+                <th>Dispute ID</th>
                 <th>Order ID</th>
                 <th>Listing</th>
-                <th>Buyer</th>
-                <th>Seller</th>
-                <th>Amount</th>
-                <th>Delivery</th>
-                <th>Payment</th>
-                <th>Escrow</th>
+                <th>Reported By</th>
+                <th>Reason</th>
+                <th>Description</th>
                 <th>Status</th>
                 <th>Created</th>
                 <th>Update Status</th>
                 <th>Delete</th>
             </tr>
 
-            <?php if ($orders->num_rows > 0): ?>
-                <?php while ($row = $orders->fetch_assoc()): ?>
+            <?php if ($disputes->num_rows > 0): ?>
+                <?php while ($row = $disputes->fetch_assoc()): ?>
                     <tr>
+                        <td>#<?php echo (int)$row['dispute_id']; ?></td>
+
                         <td>#<?php echo (int)$row['order_id']; ?></td>
 
                         <td>
                             <?php echo htmlspecialchars($row['listing_title'] ?? 'No listing found'); ?><br>
-                            <small>Listing ID: <?php echo (int)$row['listing_id']; ?></small>
+                            <small>Order status: <?php echo htmlspecialchars($row['order_status'] ?? 'N/A'); ?></small>
                         </td>
 
                         <td>
-                            <?php echo htmlspecialchars($row['buyer_name'] ?? 'Unknown Buyer'); ?><br>
-                            <small><?php echo htmlspecialchars($row['buyer_email'] ?? ''); ?></small>
+                            <?php echo htmlspecialchars($row['reported_by'] ?? 'Unknown'); ?><br>
+                            <small><?php echo htmlspecialchars($row['reporter_email'] ?? ''); ?></small>
                         </td>
 
-                        <td>
-                            <?php echo htmlspecialchars($row['seller_name'] ?? 'Unknown Seller'); ?><br>
-                            <small><?php echo htmlspecialchars($row['seller_email'] ?? ''); ?></small>
-                        </td>
+                        <td><?php echo htmlspecialchars($row['reason'] ?? ''); ?></td>
 
-                        <td>R <?php echo number_format((float)($row['price'] ?? 0), 2); ?></td>
-
-                        <td><?php echo htmlspecialchars($row['delivery_method'] ?? ''); ?></td>
+                        <td><?php echo htmlspecialchars($row['description'] ?? ''); ?></td>
 
                         <td>
-                            <?php echo htmlspecialchars($row['payment_method'] ?? 'No payment record'); ?><br>
-                            <small><?php echo htmlspecialchars($row['paid_at'] ?? ''); ?></small>
-                        </td>
-
-                        <td><?php echo htmlspecialchars($row['escrow_status'] ?? 'N/A'); ?></td>
-
-                        <td>
-                            <span class="badge <?php echo htmlspecialchars($row['order_status']); ?>">
-                                <?php echo htmlspecialchars($row['order_status']); ?>
+                            <span class="badge <?php echo htmlspecialchars($row['status']); ?>">
+                                <?php echo htmlspecialchars($row['status']); ?>
                             </span>
                         </td>
 
@@ -342,15 +314,13 @@ if (!$orders) {
 
                         <td>
                             <form method="POST">
-                                <input type="hidden" name="order_id" value="<?php echo (int)$row['order_id']; ?>">
+                                <input type="hidden" name="dispute_id" value="<?php echo (int)$row['dispute_id']; ?>">
 
-                                <select name="order_status">
-                                    <option value="pending" <?php echo ($row['order_status'] === 'pending') ? 'selected' : ''; ?>>Pending</option>
-                                    <option value="paid" <?php echo ($row['order_status'] === 'paid') ? 'selected' : ''; ?>>Paid</option>
-                                    <option value="delivered" <?php echo ($row['order_status'] === 'delivered') ? 'selected' : ''; ?>>Delivered</option>
-                                    <option value="completed" <?php echo ($row['order_status'] === 'completed') ? 'selected' : ''; ?>>Completed</option>
-                                    <option value="cancelled" <?php echo ($row['order_status'] === 'cancelled') ? 'selected' : ''; ?>>Cancelled</option>
-                                    <option value="disputed" <?php echo ($row['order_status'] === 'disputed') ? 'selected' : ''; ?>>Disputed</option>
+                                <select name="status">
+                                    <option value="open" <?php echo ($row['status'] === 'open') ? 'selected' : ''; ?>>Open</option>
+                                    <option value="under_review" <?php echo ($row['status'] === 'under_review') ? 'selected' : ''; ?>>Under Review</option>
+                                    <option value="resolved" <?php echo ($row['status'] === 'resolved') ? 'selected' : ''; ?>>Resolved</option>
+                                    <option value="closed" <?php echo ($row['status'] === 'closed') ? 'selected' : ''; ?>>Closed</option>
                                 </select>
 
                                 <button type="submit" name="update_status">Update</button>
@@ -359,8 +329,8 @@ if (!$orders) {
 
                         <td>
                             <a class="delete"
-                               href="orders.php?delete=<?php echo (int)$row['order_id']; ?>"
-                               onclick="return confirm('Are you sure you want to delete this order?');">
+                               href="disputes.php?delete=<?php echo (int)$row['dispute_id']; ?>"
+                               onclick="return confirm('Are you sure you want to delete this dispute?');">
                                 Delete
                             </a>
                         </td>
@@ -368,7 +338,7 @@ if (!$orders) {
                 <?php endwhile; ?>
             <?php else: ?>
                 <tr>
-                    <td colspan="12">No orders found.</td>
+                    <td colspan="10">No disputes found.</td>
                 </tr>
             <?php endif; ?>
         </table>
